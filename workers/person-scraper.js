@@ -219,6 +219,71 @@ async function searchDuckDuckGo(name) {
   }
 }
 
+// ——— Source 5: Bing Visual Search (reverse image lookup) ———
+async function searchBingVisual(imageBase64, apiKey) {
+  if (!apiKey) return { source: 'visual', results: [], error: 'BING_API_KEY not configured' };
+  if (!imageBase64) return { source: 'visual', results: [], error: 'No image provided' };
+  try {
+    // Decode base64 to binary
+    const parts = imageBase64.split(',');
+    const raw = parts.length > 1 ? parts[1] : parts[0];
+    const binary = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+
+    const formData = new FormData();
+    formData.append('image', new Blob([binary], { type: 'image/jpeg' }));
+
+    const res = await fetch('https://api.bing.microsoft.com/v7.0/images/visualsearch?mkt=zh-CN', {
+      method: 'POST',
+      headers: { 'Ocp-Apim-Subscription-Key': apiKey },
+      body: formData,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { source: 'visual', results: [], error: `Bing Visual returned ${res.status}: ${errText.slice(0, 100)}` };
+    }
+    const data = await res.json();
+    const results = [];
+
+    // Extract pages that contain visually similar images
+    for (const tag of data.tags || []) {
+      for (const action of tag.actions || []) {
+        if (action.actionType === 'PagesIncluding') {
+          for (const page of action.data?.value || []) {
+            if (page.name && page.hostPageUrl) {
+              results.push({
+                title: page.name.slice(0, 150),
+                url: page.hostPageUrl,
+                snippet: page.name ? `图片匹配 — 该网页包含相似人物照片` : '',
+                source: 'visual',
+                relevanceScore: 0.85,
+              });
+            }
+          }
+        }
+        // Also extract related searches / insights
+        if (action.actionType === 'MoreSizes' || action.actionType === 'ImageInsights') {
+          if (action.displayName) {
+            const insight = `视觉匹配: ${action.displayName}`;
+            if (action.data?.value?.[0]?.hostPageUrl) {
+              results.push({
+                title: action.displayName.slice(0, 100),
+                url: action.data.value[0].hostPageUrl,
+                snippet: insight,
+                source: 'visual',
+                relevanceScore: 0.6,
+              });
+            }
+          }
+        }
+      }
+    }
+    return { source: 'visual', results: results.slice(0, 15) };
+  } catch (err) {
+    return { source: 'visual', results: [], error: `Visual search failed: ${err.message}` };
+  }
+}
+
 // ——— Deduplication ———
 function normalizeURL(url) {
   try {
@@ -335,30 +400,32 @@ export default {
         return json({ success: false, error: 'Invalid JSON body' }, 400);
       }
 
-      const { name, hometown, ocrText, useAI } = body;
+      const { name, hometown, ocrText, imageBase64, useAI } = body;
       const nameStr = (name || '').trim();
       const hometownStr = (hometown || '').trim();
       const ocrStr = (ocrText || '').trim();
+      const imgStr = (imageBase64 || '').trim();
 
-      if (!nameStr && !hometownStr && !ocrStr) {
+      if (!nameStr && !hometownStr && !ocrStr && !imgStr) {
         return json({ success: false, error: '请至少填写姓名、籍贯或上传照片' }, 400);
       }
 
-      const searchName = nameStr || hometownStr || ocrStr;
+      const searchName = nameStr || ocrStr || hometownStr;
       const queries = {
         main: [nameStr, hometownStr, ocrStr, '个人资料', '简介'].filter(Boolean).join(' '),
-        name: searchName,
+        name: searchName || '未知',
       };
 
-      // Parallel fetch all sources
-      const [tavily, wiki, baidu, ddg] = await Promise.allSettled([
+      // Parallel fetch all sources (including visual search if image provided)
+      const [tavily, wiki, baidu, ddg, visual] = await Promise.allSettled([
         searchTavily(queries.main, env.TAVILY_API_KEY),
         searchWikipedia(queries.name),
         scrapeBaiduBaike(queries.name),
         searchDuckDuckGo(queries.name),
+        searchBingVisual(imgStr, env.BING_API_KEY),
       ]);
 
-      const sources = [tavily, wiki, baidu, ddg].map((s) =>
+      const sources = [tavily, wiki, baidu, ddg, visual].map((s) =>
         s.status === 'fulfilled' ? s.value : { source: 'unknown', results: [], error: s.reason?.message }
       );
 

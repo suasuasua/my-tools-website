@@ -131,6 +131,29 @@ async function runOCR(file) {
   }
 }
 
+// —— Image compression for visual search ——
+function compressImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 1024;
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 // —— Search ——
 btnSearch.addEventListener('click', doSearch);
 inputName.addEventListener('keydown', (e) => {
@@ -141,7 +164,7 @@ async function doSearch() {
   const name = inputName.value.trim();
   const hometown = inputHometown.value.trim();
 
-  if (!name && !hometown && !ocrText) {
+  if (!name && !hometown && !ocrText && !photoFile) {
     inputHometown.focus();
     inputHometown.style.borderColor = '#ef4444';
     setTimeout(() => { inputHometown.style.borderColor = ''; }, 1500);
@@ -165,10 +188,16 @@ async function doSearch() {
   const simulateProgress = startSimulatedProgress(steps, useAI);
 
   try {
+    // Compress image for visual search
+    let imageBase64 = '';
+    if (photoFile) {
+      imageBase64 = await compressImage(photoFile);
+    }
+
     const response = await fetch(`${WORKER_URL}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, hometown, ocrText, useAI }),
+      body: JSON.stringify({ name, hometown, ocrText, imageBase64, useAI }),
     });
 
     clearInterval(simulateProgress);
@@ -200,7 +229,7 @@ async function doSearch() {
 }
 
 function startSimulatedProgress(steps, hasAI) {
-  const activeSteps = hasAI ? 5 : 4;
+  const activeSteps = hasAI ? 6 : 5;
   let current = 0;
   steps[current].classList.add('active');
 
@@ -220,6 +249,7 @@ function markStepsComplete(steps, hasAI, errors) {
     if (src === 'wikipedia') return 'wikipedia';
     if (src === 'baidu_baike') return 'baidu';
     if (src === 'tavily') return 'tavily';
+    if (src === 'visual') return 'visual';
     return '';
   }).filter(Boolean);
 
@@ -293,6 +323,7 @@ function sourceLabel(source) {
     wikipedia: '维基百科',
     baidu_baike: '百度百科',
     duckduckgo: 'DuckDuckGo',
+    visual: '图片匹配',
   };
   return map[source] || source;
 }
