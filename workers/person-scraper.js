@@ -219,90 +219,25 @@ async function searchDuckDuckGo(name) {
   }
 }
 
-// ——— Source 5: Free reverse image search (via Yandex) ———
-async function searchVisual(imageBase64) {
-  if (!imageBase64) return { source: 'visual', results: [], error: 'No image provided' };
-  try {
-    // Decode base64
-    const parts = imageBase64.split(',');
-    const raw = parts.length > 1 ? parts[1] : parts[0];
-    const binary = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-
-    // Upload to temporary host to get a public URL
-    const uploadForm = new FormData();
-    uploadForm.append('file', new Blob([binary], { type: 'image/jpeg' }));
-
-    const uploadRes = await fetch('https://0x0.st', {
-      method: 'POST',
-      body: uploadForm,
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!uploadRes.ok) {
-      return { source: 'visual', results: [], error: 'Image upload for visual search failed' };
-    }
-    const imageUrl = (await uploadRes.text()).trim();
-    if (!imageUrl.startsWith('http')) {
-      return { source: 'visual', results: [], error: 'Invalid upload URL' };
-    }
-
-    // Use Yandex reverse image search
-    const yandexUrl = `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(imageUrl)}`;
-    const yandexRes = await fetch(yandexUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!yandexRes.ok) {
-      return { source: 'visual', results: [], error: `Yandex visual search returned ${yandexRes.status}` };
-    }
-
-    const html = await yandexRes.text();
-    const results = [];
-
-    // Parse Yandex results — look for pages containing the image
-    const pageRegex = /<a[^>]*href="(https?:\/\/(?!yandex|ya\.ru)[^"]+)"[^>]*class="[^"]*Link[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
-    while ((match = pageRegex.exec(html)) !== null) {
-      const url = match[1];
-      let title = match[2].replace(/<[^>]+>/g, '').trim();
-      if (!title) title = new URL(url).hostname;
-      if (results.length >= 10) break;
-      if (!results.find((r) => r.url === url)) {
-        results.push({
-          title: title.slice(0, 120),
-          url,
-          snippet: `Yandex 反向图片匹配 — 该网页可能包含相似图片`,
-          source: 'visual',
-          relevanceScore: 0.7,
-        });
-      }
-    }
-
-    // Also try to extract related search tags
-    const tagRegex = /<a[^>]*class="[^"]*Tags-Item[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-    while ((match = tagRegex.exec(html)) !== null) {
-      const tag = match[1].replace(/<[^>]+>/g, '').trim();
-      if (tag && results.length < 15) {
-        results.push({
-          title: `相关搜索: ${tag}`,
-          url: `https://yandex.com/images/search?text=${encodeURIComponent(tag)}`,
-          snippet: `图片识别标签: ${tag}`,
-          source: 'visual',
-          relevanceScore: 0.3,
-        });
-      }
-    }
-
-    if (results.length === 0) {
-      return { source: 'visual', results: [], error: 'No matching pages found for this image' };
-    }
-    return { source: 'visual', results };
-  } catch (err) {
-    return { source: 'visual', results: [], error: `Visual search failed: ${err.message}` };
-  }
+// ——— Source 5: Photo-to-keywords (OCR-enhanced search) ———
+// Photos are used for OCR text extraction (done client-side).
+// Extracted keywords are added to the main search query for better results.
+// Reverse image search is not feasible for free — it requires paid APIs
+// (Bing Visual Search, PimEyes, etc.) or JS-rendered pages that can't be scraped.
+async function searchByPhotoKeywords(ocrText) {
+  if (!ocrText) return { source: 'photo_ocr', results: [], error: 'No OCR text' };
+  // The OCR text is already included in the main Tavily/Wikipedia/Baidu queries.
+  // This source just reports that OCR keywords were used.
+  return {
+    source: 'photo_ocr',
+    results: [{
+      title: '照片 OCR 识别关键词',
+      url: '',
+      snippet: `已从照片中提取关键词用于搜索: ${ocrText.slice(0, 200)}`,
+      source: 'photo_ocr',
+      relevanceScore: 0.1,
+    }],
+  };
 }
 
 // ——— Deduplication ———
@@ -443,7 +378,7 @@ export default {
         searchWikipedia(queries.name),
         scrapeBaiduBaike(queries.name),
         searchDuckDuckGo(queries.name),
-        searchVisual(imgStr),
+        searchByPhotoKeywords(ocrStr),
       ]);
 
       const sources = [tavily, wiki, baidu, ddg, visual].map((s) =>

@@ -229,7 +229,7 @@ async function doSearch() {
 }
 
 function startSimulatedProgress(steps, hasAI) {
-  const activeSteps = hasAI ? 6 : 5;
+  const activeSteps = hasAI ? 5 : 4;
   let current = 0;
   steps[current].classList.add('active');
 
@@ -249,7 +249,7 @@ function markStepsComplete(steps, hasAI, errors) {
     if (src === 'wikipedia') return 'wikipedia';
     if (src === 'baidu_baike') return 'baidu';
     if (src === 'tavily') return 'tavily';
-    if (src === 'visual') return 'visual';
+    if (src === 'photo_ocr') return '';
     return '';
   }).filter(Boolean);
 
@@ -323,7 +323,7 @@ function sourceLabel(source) {
     wikipedia: '维基百科',
     baidu_baike: '百度百科',
     duckduckgo: 'DuckDuckGo',
-    visual: '图片匹配',
+    photo_ocr: '照片识别',
   };
   return map[source] || source;
 }
