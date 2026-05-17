@@ -1,0 +1,525 @@
+// ——— DOM refs ———
+const canvasArea = document.getElementById('canvasArea');
+const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+const fileInput = document.getElementById('fileInput');
+const mainCanvas = document.getElementById('mainCanvas');
+const ctx = mainCanvas.getContext('2d');
+const previewCanvas = document.getElementById('previewCanvas');
+const pctx = previewCanvas.getContext('2d');
+const sizeSelect = document.getElementById('sizeSelect');
+const lockRatio = document.getElementById('lockRatio');
+const customColor = document.getElementById('customColor');
+const brushSize = document.getElementById('brushSize');
+const brushSizeVal = document.getElementById('brushSizeVal');
+const btnBrush = document.getElementById('btnBrush');
+const btnAutoRemove = document.getElementById('btnAutoRemove');
+const btnResetBg = document.getElementById('btnResetBg');
+const btnDownload = document.getElementById('btnDownload');
+const brushHint = document.getElementById('brushHint');
+
+// ——— State ———
+let image = null;
+let imgX = 0, imgY = 0, imgW = 0, imgH = 0;
+let cropBox = null;
+let maskData = null;
+let bgColor = '#ffffff';
+let brushActive = false;   // brush mode ON (toggle)
+let painting = false;       // actively painting (mouse down)
+let outputW = 295, outputH = 413;
+
+// Unified interaction state
+let pointer = { mode: 'none', sx: 0, sy: 0, startBox: null, corner: '' };
+let lastBrushPos = null;
+
+// ——— Upload ———
+uploadPlaceholder.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) loadImage(e.target.files[0]);
+});
+
+canvasArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadPlaceholder.classList.add('drag-over');
+});
+canvasArea.addEventListener('dragleave', () => {
+  uploadPlaceholder.classList.remove('drag-over');
+});
+canvasArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadPlaceholder.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadImage(file);
+});
+
+function loadImage(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      image = img;
+      maskData = null;
+      brushActive = false;
+      painting = false;
+      btnBrush.classList.remove('active');
+      initCanvas();
+      updatePreview();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function initCanvas() {
+  const areaW = canvasArea.clientWidth;
+  const areaH = canvasArea.clientHeight;
+  mainCanvas.width = areaW;
+  mainCanvas.height = areaH;
+  mainCanvas.style.display = 'block';
+  uploadPlaceholder.style.display = 'none';
+
+  const pad = 40;
+  const maxW = areaW - pad * 2;
+  const maxH = areaH - pad * 2;
+  const scale = Math.min(maxW / image.width, maxH / image.height);
+  imgW = image.width * scale;
+  imgH = image.height * scale;
+  imgX = (areaW - imgW) / 2;
+  imgY = (areaH - imgH) / 2;
+
+  cropBox = {
+    x: imgX + imgW * 0.125,
+    y: imgY + imgH * 0.125,
+    w: imgW * 0.75,
+    h: imgH * 0.75,
+  };
+  clampCropBox();
+  drawScene();
+}
+
+// ——— Drawing ———
+function drawScene() {
+  ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+  // Dim area outside crop box
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+  ctx.clearRect(cropBox.x, cropBox.y, cropBox.w, cropBox.h);
+
+  // Draw image inside crop box
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(cropBox.x, cropBox.y, cropBox.w, cropBox.h);
+  ctx.clip();
+  ctx.drawImage(image, imgX, imgY, imgW, imgH);
+  ctx.restore();
+
+  // Crop border
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.strokeRect(cropBox.x, cropBox.y, cropBox.w, cropBox.h);
+  ctx.setLineDash([]);
+
+  // Rule-of-thirds
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    const lx = cropBox.x + (cropBox.w / 3) * i;
+    ctx.beginPath(); ctx.moveTo(lx, cropBox.y); ctx.lineTo(lx, cropBox.y + cropBox.h); ctx.stroke();
+    const ly = cropBox.y + (cropBox.h / 3) * i;
+    ctx.beginPath(); ctx.moveTo(cropBox.x, ly); ctx.lineTo(cropBox.x + cropBox.w, ly); ctx.stroke();
+  }
+
+  // Corner handles
+  for (const [cx, cy] of [
+    [cropBox.x, cropBox.y],
+    [cropBox.x + cropBox.w, cropBox.y],
+    [cropBox.x, cropBox.y + cropBox.h],
+    [cropBox.x + cropBox.w, cropBox.y + cropBox.h],
+  ]) {
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+// ——— Unified pointer handling ———
+function getPos(e) {
+  const rect = mainCanvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function whichCorner(mx, my) {
+  const r = 18;
+  const corners = [
+    { x: cropBox.x, y: cropBox.y, name: 'nw' },
+    { x: cropBox.x + cropBox.w, y: cropBox.y, name: 'ne' },
+    { x: cropBox.x, y: cropBox.y + cropBox.h, name: 'sw' },
+    { x: cropBox.x + cropBox.w, y: cropBox.y + cropBox.h, name: 'se' },
+  ];
+  for (const c of corners) {
+    if (Math.hypot(mx - c.x, my - c.y) <= r) return c.name;
+  }
+  return null;
+}
+
+function insideBox(mx, my) {
+  return mx > cropBox.x && mx < cropBox.x + cropBox.w && my > cropBox.y && my < cropBox.y + cropBox.h;
+}
+
+canvasArea.addEventListener('pointerdown', (e) => {
+  if (!cropBox) return;
+  const { x, y } = getPos(e);
+
+  // Brush mode: paint directly (takes priority inside crop box)
+  if (brushActive && insideBox(x, y)) {
+    if (!maskData) ensureMask();
+    painting = true;
+    pointer.mode = 'brush';
+    mainCanvas.setPointerCapture(e.pointerId);
+    paintAt(x, y);
+    return;
+  }
+
+  // Crop interaction
+  const corner = whichCorner(x, y);
+  if (corner) {
+    pointer = { mode: 'resize', sx: x, sy: y, startBox: { ...cropBox }, corner };
+    mainCanvas.setPointerCapture(e.pointerId);
+  } else if (insideBox(x, y)) {
+    pointer = { mode: 'move', sx: x, sy: y, startBox: { ...cropBox }, corner: '' };
+    mainCanvas.setPointerCapture(e.pointerId);
+  } else {
+    pointer.mode = 'none';
+  }
+});
+
+canvasArea.addEventListener('pointermove', (e) => {
+  if (!cropBox) return;
+  const { x, y } = getPos(e);
+
+  if (painting) {
+    // Interpolate brush strokes for smooth lines
+    if (lastBrushPos) {
+      const dx = x - lastBrushPos.x;
+      const dy = y - lastBrushPos.y;
+      const dist = Math.hypot(dx, dy);
+      const steps = Math.ceil(dist / 2);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        paintAt(lastBrushPos.x + dx * t, lastBrushPos.y + dy * t);
+      }
+    } else {
+      paintAt(x, y);
+    }
+    lastBrushPos = { x, y };
+    return;
+  }
+
+  if (pointer.mode === 'none') {
+    // Update cursor
+    const corner = whichCorner(x, y);
+    if (corner) {
+      mainCanvas.style.cursor = corner + '-resize';
+    } else if (insideBox(x, y)) {
+      mainCanvas.style.cursor = brushActive ? 'crosshair' : 'move';
+    } else {
+      mainCanvas.style.cursor = brushActive ? 'crosshair' : 'default';
+    }
+    return;
+  }
+
+  // Drag crop box
+  const dx = x - pointer.sx;
+  const dy = y - pointer.sy;
+  const sb = pointer.startBox;
+
+  if (pointer.mode === 'move') {
+    cropBox.x = sb.x + dx;
+    cropBox.y = sb.y + dy;
+    clampCropBox();
+  } else if (pointer.mode === 'resize') {
+    applyResize(pointer.corner, sb, dx, dy);
+  }
+
+  // Mask is tied to old crop box position
+  if (maskData) { maskData = null; brushActive = false; btnBrush.classList.remove('active'); }
+  drawScene();
+  updatePreview();
+});
+
+canvasArea.addEventListener('pointerup', () => {
+  if (pointer.mode === 'brush' && painting) {
+    painting = false;
+    lastBrushPos = null;
+    brushHint.textContent = '点击「自动去背景」或「手动擦除」继续处理背景';
+    updatePreview();
+  }
+  pointer.mode = 'none';
+});
+
+canvasArea.addEventListener('pointerleave', () => {
+  if (painting) {
+    painting = false;
+    lastBrushPos = null;
+    updatePreview();
+  }
+  pointer.mode = 'none';
+});
+
+// ——— Resize ———
+function applyResize(corner, sb, dx, dy) {
+  const keepRatio = lockRatio.checked;
+  const aspect = keepRatio ? outputW / outputH : null;
+
+  let { x, y, w, h } = sb;
+
+  switch (corner) {
+    case 'se':
+      w += dx;
+      h = keepRatio ? w / aspect : h + dy;
+      break;
+    case 'sw':
+      x += dx;
+      w -= dx;
+      h = keepRatio ? w / aspect : h + dy;
+      break;
+    case 'ne':
+      y += dy;
+      w += dx;
+      h = keepRatio ? w / aspect : h - dy;
+      break;
+    case 'nw':
+      x += dx;
+      y += dy;
+      w -= dx;
+      h = keepRatio ? w / aspect : h - dy;
+      break;
+  }
+
+  if (w < 50) {
+    if (corner.includes('w')) { x = cropBox.x; w = 50; } else { w = 50; }
+  }
+  if (h < 50) {
+    if (corner.includes('n')) { y = cropBox.y; h = 50; } else { h = 50; }
+  }
+
+  cropBox.x = x; cropBox.y = y; cropBox.w = w; cropBox.h = h;
+  clampCropBox();
+}
+
+function clampCropBox() {
+  cropBox.x = Math.max(imgX, Math.min(cropBox.x, imgX + imgW - cropBox.w));
+  cropBox.y = Math.max(imgY, Math.min(cropBox.y, imgY + imgH - cropBox.h));
+  if (cropBox.w > imgW) cropBox.w = imgW;
+  if (cropBox.h > imgH) cropBox.h = imgH;
+}
+
+// ——— Brush painting ———
+function paintAt(mx, my) {
+  if (!insideBox(mx, my)) return;
+  const bx = mx - cropBox.x;
+  const by = my - cropBox.y;
+  const r = parseInt(brushSize.value) / 2;
+
+  // Visual feedback
+  ctx.fillStyle = 'rgba(255, 0, 0, 0.25)';
+  ctx.beginPath();
+  ctx.arc(mx, my, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Update mask
+  const data = maskData.data;
+  const mw = maskData.width;
+  const mh = maskData.height;
+  const ri = Math.ceil(r);
+  for (let dy = -ri; dy <= ri; dy++) {
+    for (let dx = -ri; dx <= ri; dx++) {
+      if (dx * dx + dy * dy > r * r) continue;
+      const px = Math.floor(bx + dx);
+      const py = Math.floor(by + dy);
+      if (px < 0 || px >= mw || py < 0 || py >= mh) continue;
+      data[(py * mw + px) * 4 + 3] = 0;
+    }
+  }
+}
+
+// ——— Background removal ———
+function ensureMask() {
+  if (!maskData) {
+    const w = Math.round(cropBox.w);
+    const h = Math.round(cropBox.h);
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(image,
+      (cropBox.x - imgX) / imgW * image.width,
+      (cropBox.y - imgY) / imgH * image.height,
+      cropBox.w / imgW * image.width,
+      cropBox.h / imgH * image.height,
+      0, 0, w, h);
+    maskData = tctx.getImageData(0, 0, w, h);
+  }
+}
+
+btnAutoRemove.addEventListener('click', () => {
+  if (!cropBox) return;
+  ensureMask();
+  brushActive = false;
+  btnBrush.classList.remove('active');
+
+  const w = maskData.width, h = maskData.height;
+  const d = maskData.data;
+
+  // Sample 4 corners
+  const patches = [
+    [2, 2], [w - 3, 2], [2, h - 3], [w - 3, h - 3],
+  ];
+  let sr = 0, sg = 0, sb = 0, count = 0;
+  const samples = [];
+  for (const [cx, cy] of patches) {
+    for (let dx = 0; dx < 5; dx++) {
+      for (let dy = 0; dy < 5; dy++) {
+        const i = ((cy + dy) * w + (cx + dx)) * 4;
+        if (i + 2 < d.length) {
+          samples.push([d[i], d[i + 1], d[i + 2]]);
+          sr += d[i]; sg += d[i + 1]; sb += d[i + 2];
+          count++;
+        }
+      }
+    }
+  }
+  sr /= count; sg /= count; sb /= count;
+
+  // Variance
+  let variance = 0;
+  for (const [r, g, b] of samples) {
+    variance += (r - sr) ** 2 + (g - sg) ** 2 + (b - sb) ** 2;
+  }
+  variance /= count;
+  const tolerance = Math.max(Math.sqrt(variance) * 2.8, 30);
+
+  // Remove similar
+  for (let i = 0; i < d.length; i += 4) {
+    const dist = Math.sqrt((d[i] - sr) ** 2 + (d[i + 1] - sg) ** 2 + (d[i + 2] - sb) ** 2);
+    if (dist < tolerance) d[i + 3] = 0;
+  }
+
+  featherMask();
+  updatePreview();
+  brushHint.textContent = '背景已自动处理，不满意可用笔刷微调';
+  btnDownload.disabled = false;
+});
+
+btnBrush.addEventListener('click', () => {
+  if (!cropBox) return;
+  ensureMask();
+  brushActive = !brushActive;
+  btnBrush.classList.toggle('active', brushActive);
+  if (brushActive) {
+    brushHint.textContent = '在照片上涂抹要移除的背景区域，松开停止';
+    mainCanvas.style.cursor = 'crosshair';
+  } else {
+    brushHint.textContent = '已停止擦除，可继续处理';
+    mainCanvas.style.cursor = 'default';
+  }
+});
+
+btnResetBg.addEventListener('click', () => {
+  maskData = null;
+  brushActive = false;
+  btnBrush.classList.remove('active');
+  brushHint.textContent = '点击「自动去背景」或「手动擦除」开始处理背景';
+  updatePreview();
+  drawScene();
+});
+
+function featherMask() {
+  if (!maskData) return;
+  const w = maskData.width, h = maskData.height;
+  const d = maskData.data;
+  const copy = new Uint8ClampedArray(d);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          sum += copy[((y + dy) * w + (x + dx)) * 4 + 3];
+      d[idx + 3] = Math.round(sum / 9);
+    }
+  }
+}
+
+// ——— Preview ———
+function updatePreview() {
+  if (!image || !cropBox) return;
+  const [ow, oh] = sizeSelect.value.split(',').map(Number);
+  outputW = ow; outputH = oh;
+
+  previewCanvas.width = outputW;
+  previewCanvas.height = outputH;
+
+  pctx.fillStyle = bgColor;
+  pctx.fillRect(0, 0, outputW, outputH);
+
+  if (maskData) {
+    const src = document.createElement('canvas');
+    src.width = maskData.width; src.height = maskData.height;
+    const sctx = src.getContext('2d');
+    sctx.drawImage(image,
+      (cropBox.x - imgX) / imgW * image.width,
+      (cropBox.y - imgY) / imgH * image.height,
+      cropBox.w / imgW * image.width,
+      cropBox.h / imgH * image.height,
+      0, 0, src.width, src.height);
+    const sd = sctx.getImageData(0, 0, src.width, src.height);
+    for (let i = 0; i < sd.data.length; i += 4) {
+      sd.data[i + 3] = maskData.data[i + 3];
+    }
+    sctx.putImageData(sd, 0, 0);
+    pctx.drawImage(src, 0, 0, outputW, outputH);
+  } else {
+    pctx.drawImage(image,
+      (cropBox.x - imgX) / imgW * image.width,
+      (cropBox.y - imgY) / imgH * image.height,
+      cropBox.w / imgW * image.width,
+      cropBox.h / imgH * image.height,
+      0, 0, outputW, outputH);
+  }
+
+  btnDownload.disabled = false;
+}
+
+// ——— Controls ———
+sizeSelect.addEventListener('change', updatePreview);
+
+document.querySelectorAll('.color-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    bgColor = btn.dataset.color;
+    customColor.value = bgColor;
+    updatePreview();
+  });
+});
+
+customColor.addEventListener('input', () => {
+  bgColor = customColor.value;
+  document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+  updatePreview();
+});
+
+brushSize.addEventListener('input', () => {
+  brushSizeVal.textContent = brushSize.value + 'px';
+});
+
+btnDownload.addEventListener('click', () => {
+  const link = document.createElement('a');
+  link.download = `证件照_${outputW}x${outputH}.png`;
+  link.href = previewCanvas.toDataURL('image/png');
+  link.click();
+});

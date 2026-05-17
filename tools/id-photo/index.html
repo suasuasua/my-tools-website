@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>证件照生成 - 工具集</title>
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="tool-page">
+    <header class="tool-header">
+      <a href="../../" class="back-link">← 返回首页</a>
+      <h1>📷 证件照生成</h1>
+      <p>上传照片，在线裁剪、换底色，一键下载标准证件照</p>
+    </header>
+
+    <div class="tool-body">
+      <!-- Left: Canvas workspace -->
+      <div class="workspace">
+        <div class="canvas-area" id="canvasArea">
+          <div class="upload-placeholder" id="uploadPlaceholder">
+            <span class="upload-icon">📁</span>
+            <p>拖拽照片到这里，或点击上传</p>
+            <input type="file" id="fileInput" accept="image/*" hidden>
+          </div>
+          <canvas id="mainCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Right: Controls -->
+      <div class="controls">
+        <!-- Step 1: Crop -->
+        <section class="control-section">
+          <h3>📐 照片尺寸</h3>
+          <select id="sizeSelect">
+            <option value="295,413">一寸 (25×35mm)</option>
+            <option value="413,579">二寸 (35×49mm)</option>
+            <option value="390,567">二寸 (35×45mm)</option>
+            <option value="260,378">小一寸 (22×32mm)</option>
+            <option value="358,441">大一寸 (30×40mm)</option>
+            <option value="413,295">一寸横版</option>
+            <option value="480,640">三寸 (40×55mm)</option>
+          </select>
+          <div class="ratio-lock">
+            <label>
+              <input type="checkbox" id="lockRatio" checked> 锁定比例
+            </label>
+          </div>
+        </section>
+
+        <!-- Step 2: Background -->
+        <section class="control-section">
+          <h3>🎨 背景色</h3>
+          <div class="color-presets">
+            <button class="color-btn active" data-color="#ffffff" style="background:#fff" title="白色"></button>
+            <button class="color-btn" data-color="#438edb" style="background:#438edb" title="蓝色"></button>
+            <button class="color-btn" data-color="#c9302a" style="background:#c9302a" title="红色"></button>
+            <button class="color-btn" data-color="#999999" style="background:#999" title="灰色"></button>
+          </div>
+          <div class="custom-color">
+            <input type="color" id="customColor" value="#ffffff">
+            <label for="customColor">自定义</label>
+          </div>
+        </section>
+
+        <!-- Step 3: Background removal -->
+        <section class="control-section">
+          <h3>✂️ 背景处理</h3>
+          <div class="brush-controls">
+            <label>笔刷大小: <input type="range" id="brushSize" min="5" max="80" value="20"></label>
+            <span id="brushSizeVal">20px</span>
+          </div>
+          <div class="brush-actions">
+            <button id="btnBrush" class="btn btn-outline">🖌️ 手动擦除</button>
+            <button id="btnAutoRemove" class="btn btn-outline">🤖 自动去背景</button>
+            <button id="btnResetBg" class="btn btn-outline">🔄 恢复原图</button>
+          </div>
+          <p class="hint" id="brushHint">点击「自动去背景」或「手动擦除」开始处理背景</p>
+        </section>
+
+        <!-- Output -->
+        <section class="control-section">
+          <h3>📥 输出</h3>
+          <div class="preview-box" id="previewBox">
+            <canvas id="previewCanvas"></canvas>
+          </div>
+          <button id="btnDownload" class="btn btn-primary" disabled>下载证件照 (PNG)</button>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
