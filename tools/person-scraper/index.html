@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人物信息爬虫 - 工具集</title>
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="tool-page">
+    <header class="tool-header">
+      <a href="../../" class="back-link">← 返回首页</a>
+      <h1>🔍 人物信息爬虫</h1>
+      <p>输入姓名和照片，自动搜索汇总全网人物信息</p>
+    </header>
+
+    <div class="tool-body">
+      <!-- Left: Input Form -->
+      <div class="search-panel">
+        <section class="form-section">
+          <h3>📷 人物照片 <span class="optional">(选填)</span></h3>
+          <div class="photo-upload-zone" id="photoZone">
+            <div class="photo-placeholder" id="photoPlaceholder">
+              <span class="upload-icon">📁</span>
+              <p>拖拽照片或点击上传</p>
+              <p class="upload-hint">支持 JPG/PNG，可用于 OCR 提取关键词</p>
+            </div>
+            <img id="photoPreview" class="photo-preview" style="display:none">
+            <button id="btnRemovePhoto" class="btn-remove-photo" style="display:none" title="移除照片">✕</button>
+            <input type="file" id="photoInput" accept="image/*" hidden>
+          </div>
+          <div class="ocr-result" id="ocrResult" style="display:none">
+            <span class="ocr-label">OCR 识别：</span><span id="ocrText"></span>
+          </div>
+        </section>
+
+        <section class="form-section">
+          <h3>👤 基本信息</h3>
+          <div class="input-group">
+            <label for="inputName">姓名 <span class="required">*</span></label>
+            <input type="text" id="inputName" placeholder="请输入人物姓名" autocomplete="off">
+          </div>
+          <div class="input-group">
+            <label for="inputHometown">籍贯/关键词</label>
+            <input type="text" id="inputHometown" placeholder="如：北京、程序员、作家" autocomplete="off">
+          </div>
+          <div class="input-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="toggleAI" checked>
+              <span>使用 AI 生成摘要</span>
+            </label>
+          </div>
+          <button id="btnSearch" class="btn btn-primary">🔍 开始搜索</button>
+        </section>
+      </div>
+
+      <!-- Right: Results -->
+      <div class="results-panel" id="resultsPanel">
+        <!-- Initial state -->
+        <div class="results-placeholder" id="resultsPlaceholder">
+          <span class="placeholder-icon">📋</span>
+          <p>搜索结果将显示在这里</p>
+        </div>
+
+        <!-- Loading state -->
+        <div class="loading-state" id="loadingState" style="display:none">
+          <div class="progress-steps">
+            <div class="step" data-step="tavily">
+              <span class="step-dot"></span>
+              <span class="step-label">搜索网络...</span>
+            </div>
+            <div class="step" data-step="wikipedia">
+              <span class="step-dot"></span>
+              <span class="step-label">查询维基百科...</span>
+            </div>
+            <div class="step" data-step="baidu">
+              <span class="step-dot"></span>
+              <span class="step-label">抓取百度百科...</span>
+            </div>
+            <div class="step" data-step="dedup">
+              <span class="step-dot"></span>
+              <span class="step-label">整合去重...</span>
+            </div>
+            <div class="step" id="stepAI" style="display:none" data-step="ai">
+              <span class="step-dot"></span>
+              <span class="step-label">AI 生成摘要...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error state -->
+        <div class="error-state" id="errorState" style="display:none">
+          <span class="error-icon">⚠️</span>
+          <p id="errorMessage"></p>
+          <button id="btnRetry" class="btn btn-outline">重试</button>
+        </div>
+
+        <!-- Results state -->
+        <div class="results-content" id="resultsContent" style="display:none">
+          <!-- Summary card -->
+          <div class="summary-card" id="summaryCard" style="display:none">
+            <div class="summary-header">
+              <h3>📝 AI 摘要</h3>
+              <button id="btnCopySummary" class="btn-icon" title="复制摘要">📋</button>
+            </div>
+            <div class="summary-body" id="summaryBody"></div>
+          </div>
+
+          <!-- Source tabs -->
+          <div class="tab-bar" id="tabBar">
+            <button class="tab active" data-source="all">全部</button>
+          </div>
+
+          <!-- Result list -->
+          <div class="result-list" id="resultList"></div>
+
+          <!-- Export bar -->
+          <div class="export-bar">
+            <button id="btnDownloadMD" class="btn btn-outline">📥 下载 Markdown</button>
+            <button id="btnPrint" class="btn btn-outline">🖨️ 打印 PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

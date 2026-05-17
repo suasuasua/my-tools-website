@@ -1,0 +1,6 @@
+name = "person-scraper"
+main = "workers/person-scraper.js"
+compatibility_date = "2025-01-01"
+
+[observability]
+enabled = true
