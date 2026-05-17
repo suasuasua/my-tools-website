@@ -219,66 +219,87 @@ async function searchDuckDuckGo(name) {
   }
 }
 
-// ——— Source 5: Bing Visual Search (reverse image lookup) ———
-async function searchBingVisual(imageBase64, apiKey) {
-  if (!apiKey) return { source: 'visual', results: [], error: 'BING_API_KEY not configured' };
+// ——— Source 5: Free reverse image search (via Yandex) ———
+async function searchVisual(imageBase64) {
   if (!imageBase64) return { source: 'visual', results: [], error: 'No image provided' };
   try {
-    // Decode base64 to binary
+    // Decode base64
     const parts = imageBase64.split(',');
     const raw = parts.length > 1 ? parts[1] : parts[0];
     const binary = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
 
-    const formData = new FormData();
-    formData.append('image', new Blob([binary], { type: 'image/jpeg' }));
+    // Upload to temporary host to get a public URL
+    const uploadForm = new FormData();
+    uploadForm.append('file', new Blob([binary], { type: 'image/jpeg' }));
 
-    const res = await fetch('https://api.bing.microsoft.com/v7.0/images/visualsearch?mkt=zh-CN', {
+    const uploadRes = await fetch('https://0x0.st', {
       method: 'POST',
-      headers: { 'Ocp-Apim-Subscription-Key': apiKey },
-      body: formData,
+      body: uploadForm,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!uploadRes.ok) {
+      return { source: 'visual', results: [], error: 'Image upload for visual search failed' };
+    }
+    const imageUrl = (await uploadRes.text()).trim();
+    if (!imageUrl.startsWith('http')) {
+      return { source: 'visual', results: [], error: 'Invalid upload URL' };
+    }
+
+    // Use Yandex reverse image search
+    const yandexUrl = `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(imageUrl)}`;
+    const yandexRes = await fetch(yandexUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) {
-      const errText = await res.text();
-      return { source: 'visual', results: [], error: `Bing Visual returned ${res.status}: ${errText.slice(0, 100)}` };
+
+    if (!yandexRes.ok) {
+      return { source: 'visual', results: [], error: `Yandex visual search returned ${yandexRes.status}` };
     }
-    const data = await res.json();
+
+    const html = await yandexRes.text();
     const results = [];
 
-    // Extract pages that contain visually similar images
-    for (const tag of data.tags || []) {
-      for (const action of tag.actions || []) {
-        if (action.actionType === 'PagesIncluding') {
-          for (const page of action.data?.value || []) {
-            if (page.name && page.hostPageUrl) {
-              results.push({
-                title: page.name.slice(0, 150),
-                url: page.hostPageUrl,
-                snippet: page.name ? `图片匹配 — 该网页包含相似人物照片` : '',
-                source: 'visual',
-                relevanceScore: 0.85,
-              });
-            }
-          }
-        }
-        // Also extract related searches / insights
-        if (action.actionType === 'MoreSizes' || action.actionType === 'ImageInsights') {
-          if (action.displayName) {
-            const insight = `视觉匹配: ${action.displayName}`;
-            if (action.data?.value?.[0]?.hostPageUrl) {
-              results.push({
-                title: action.displayName.slice(0, 100),
-                url: action.data.value[0].hostPageUrl,
-                snippet: insight,
-                source: 'visual',
-                relevanceScore: 0.6,
-              });
-            }
-          }
-        }
+    // Parse Yandex results — look for pages containing the image
+    const pageRegex = /<a[^>]*href="(https?:\/\/(?!yandex|ya\.ru)[^"]+)"[^>]*class="[^"]*Link[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = pageRegex.exec(html)) !== null) {
+      const url = match[1];
+      let title = match[2].replace(/<[^>]+>/g, '').trim();
+      if (!title) title = new URL(url).hostname;
+      if (results.length >= 10) break;
+      if (!results.find((r) => r.url === url)) {
+        results.push({
+          title: title.slice(0, 120),
+          url,
+          snippet: `Yandex 反向图片匹配 — 该网页可能包含相似图片`,
+          source: 'visual',
+          relevanceScore: 0.7,
+        });
       }
     }
-    return { source: 'visual', results: results.slice(0, 15) };
+
+    // Also try to extract related search tags
+    const tagRegex = /<a[^>]*class="[^"]*Tags-Item[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+    while ((match = tagRegex.exec(html)) !== null) {
+      const tag = match[1].replace(/<[^>]+>/g, '').trim();
+      if (tag && results.length < 15) {
+        results.push({
+          title: `相关搜索: ${tag}`,
+          url: `https://yandex.com/images/search?text=${encodeURIComponent(tag)}`,
+          snippet: `图片识别标签: ${tag}`,
+          source: 'visual',
+          relevanceScore: 0.3,
+        });
+      }
+    }
+
+    if (results.length === 0) {
+      return { source: 'visual', results: [], error: 'No matching pages found for this image' };
+    }
+    return { source: 'visual', results };
   } catch (err) {
     return { source: 'visual', results: [], error: `Visual search failed: ${err.message}` };
   }
@@ -422,7 +443,7 @@ export default {
         searchWikipedia(queries.name),
         scrapeBaiduBaike(queries.name),
         searchDuckDuckGo(queries.name),
-        searchBingVisual(imgStr, env.BING_API_KEY),
+        searchVisual(imgStr),
       ]);
 
       const sources = [tavily, wiki, baidu, ddg, visual].map((s) =>
