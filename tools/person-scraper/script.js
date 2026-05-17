@@ -139,14 +139,15 @@ inputName.addEventListener('keydown', (e) => {
 
 async function doSearch() {
   const name = inputName.value.trim();
-  if (!name) {
-    inputName.focus();
-    inputName.style.borderColor = '#ef4444';
-    setTimeout(() => { inputName.style.borderColor = ''; }, 1500);
+  const hometown = inputHometown.value.trim();
+
+  if (!name && !hometown && !ocrText) {
+    inputHometown.focus();
+    inputHometown.style.borderColor = '#ef4444';
+    setTimeout(() => { inputHometown.style.borderColor = ''; }, 1500);
     return;
   }
 
-  const hometown = inputHometown.value.trim();
   const useAI = toggleAI.checked;
 
   // Show loading

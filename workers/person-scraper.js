@@ -336,13 +336,18 @@ export default {
       }
 
       const { name, hometown, ocrText, useAI } = body;
-      if (!name || !name.trim()) {
-        return json({ success: false, error: '姓名不能为空' }, 400);
+      const nameStr = (name || '').trim();
+      const hometownStr = (hometown || '').trim();
+      const ocrStr = (ocrText || '').trim();
+
+      if (!nameStr && !hometownStr && !ocrStr) {
+        return json({ success: false, error: '请至少填写姓名、籍贯或上传照片' }, 400);
       }
 
+      const searchName = nameStr || hometownStr || ocrStr;
       const queries = {
-        main: [name, hometown, ocrText, '个人资料', '简介'].filter(Boolean).join(' '),
-        name: name.trim(),
+        main: [nameStr, hometownStr, ocrStr, '个人资料', '简介'].filter(Boolean).join(' '),
+        name: searchName,
       };
 
       // Parallel fetch all sources
