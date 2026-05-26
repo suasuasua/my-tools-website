@@ -374,50 +374,55 @@ btnAutoRemove.addEventListener('click', () => {
   const w = maskData.width, h = maskData.height;
   const d = maskData.data;
 
-  // Sample 8 regions (4 corners + 4 edge midpoints) for robust bg detection
-  const margin = Math.min(Math.floor(Math.min(w, h) * 0.06), 18);
-  const regions = [
-    [margin, margin], [w - margin, margin],
-    [margin, h - margin], [w - margin, h - margin],
-    [Math.floor(w / 2), margin], [Math.floor(w / 2), h - margin],
-    [margin, Math.floor(h / 2)], [w - margin, Math.floor(h / 2)],
+  // Sample 4 corners, each 9×9, compute per-corner average
+  const margin = Math.min(Math.floor(Math.min(w, h) * 0.05), 16);
+  const corners = [
+    [margin, margin], [w - 1 - margin, margin],
+    [margin, h - 1 - margin], [w - 1 - margin, h - 1 - margin],
   ];
-  const regionSize = 4;
-  const regionAvgs = [];
-  for (const [cx, cy] of regions) {
+  const cornerAvgs = [];
+  for (const [cx, cy] of corners) {
     let rr = 0, rg = 0, rb = 0, n = 0;
-    for (let dx = -regionSize; dx <= regionSize; dx++) {
-      for (let dy = -regionSize; dy <= regionSize; dy++) {
-        const i = ((cy + dy) * w + (cx + dx)) * 4;
-        if (i >= 0 && i + 2 < d.length) {
-          rr += d[i]; rg += d[i + 1]; rb += d[i + 2];
-          n++;
-        }
+    for (let dx = -4; dx <= 4; dx++) {
+      for (let dy = -4; dy <= 4; dy++) {
+        const px = cx + dx, py = cy + dy;
+        if (px < 0 || px >= w || py < 0 || py >= h) continue;
+        const i = (py * w + px) * 4;
+        rr += d[i]; rg += d[i + 1]; rb += d[i + 2];
+        n++;
       }
     }
-    if (n > 0) regionAvgs.push({ r: rr / n, g: rg / n, b: rb / n });
+    cornerAvgs.push({ r: rr / n, g: rg / n, b: rb / n });
   }
 
-  // Use median of region averages to reject outlier regions (e.g. hair in a corner)
-  const sortedByBrightness = regionAvgs.map(a => a.r + a.g + a.b).sort((a, b) => a - b);
-  const medianBrightness = sortedByBrightness[Math.floor(sortedByBrightness.length / 2)];
-  const filtered = regionAvgs.filter(a => {
-    const brightness = a.r + a.g + a.b;
-    return Math.abs(brightness - medianBrightness) < 180;
-  });
-  const regionsToUse = filtered.length >= 3 ? filtered : regionAvgs;
+  // Build a background cluster: corners that have at least one "buddy"
+  // within similarity threshold (agree on background color).
+  const SIMILAR = 50;
+  const bgCluster = [];
+  for (let i = 0; i < cornerAvgs.length; i++) {
+    let buddies = 0;
+    for (let j = 0; j < cornerAvgs.length; j++) {
+      if (i === j) continue;
+      const dr = cornerAvgs[i].r - cornerAvgs[j].r;
+      const dg = cornerAvgs[i].g - cornerAvgs[j].g;
+      const db = cornerAvgs[i].b - cornerAvgs[j].b;
+      if (dr * dr + dg * dg + db * db < SIMILAR * SIMILAR) buddies++;
+    }
+    if (buddies >= 1) bgCluster.push(cornerAvgs[i]);
+  }
+  const regionsToUse = bgCluster.length >= 2 ? bgCluster : cornerAvgs;
 
   let sr = 0, sg = 0, sb = 0;
   for (const a of regionsToUse) { sr += a.r; sg += a.g; sb += a.b; }
   sr /= regionsToUse.length; sg /= regionsToUse.length; sb /= regionsToUse.length;
 
-  // Variance from filtered regions
+  // Variance across the background cluster
   let variance = 0;
   for (const a of regionsToUse) {
     variance += (a.r - sr) ** 2 + (a.g - sg) ** 2 + (a.b - sb) ** 2;
   }
   variance /= regionsToUse.length;
-  const tolerance = Math.max(Math.sqrt(variance) * 2.2, 36);
+  const tolerance = Math.max(Math.sqrt(variance) * 2.5, 45);
 
   // Remove pixels similar to background
   for (let i = 0; i < d.length; i += 4) {
