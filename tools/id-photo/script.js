@@ -374,38 +374,55 @@ btnAutoRemove.addEventListener('click', () => {
   const w = maskData.width, h = maskData.height;
   const d = maskData.data;
 
-  // Sample 4 corners
-  const patches = [
-    [2, 2], [w - 3, 2], [2, h - 3], [w - 3, h - 3],
+  // Sample 8 regions (4 corners + 4 edge midpoints) for robust bg detection
+  const margin = Math.min(Math.floor(Math.min(w, h) * 0.06), 18);
+  const regions = [
+    [margin, margin], [w - margin, margin],
+    [margin, h - margin], [w - margin, h - margin],
+    [Math.floor(w / 2), margin], [Math.floor(w / 2), h - margin],
+    [margin, Math.floor(h / 2)], [w - margin, Math.floor(h / 2)],
   ];
-  let sr = 0, sg = 0, sb = 0, count = 0;
-  const samples = [];
-  for (const [cx, cy] of patches) {
-    for (let dx = 0; dx < 5; dx++) {
-      for (let dy = 0; dy < 5; dy++) {
+  const regionSize = 4;
+  const regionAvgs = [];
+  for (const [cx, cy] of regions) {
+    let rr = 0, rg = 0, rb = 0, n = 0;
+    for (let dx = -regionSize; dx <= regionSize; dx++) {
+      for (let dy = -regionSize; dy <= regionSize; dy++) {
         const i = ((cy + dy) * w + (cx + dx)) * 4;
-        if (i + 2 < d.length) {
-          samples.push([d[i], d[i + 1], d[i + 2]]);
-          sr += d[i]; sg += d[i + 1]; sb += d[i + 2];
-          count++;
+        if (i >= 0 && i + 2 < d.length) {
+          rr += d[i]; rg += d[i + 1]; rb += d[i + 2];
+          n++;
         }
       }
     }
+    if (n > 0) regionAvgs.push({ r: rr / n, g: rg / n, b: rb / n });
   }
-  sr /= count; sg /= count; sb /= count;
 
-  // Variance
+  // Use median of region averages to reject outlier regions (e.g. hair in a corner)
+  const sortedByBrightness = regionAvgs.map(a => a.r + a.g + a.b).sort((a, b) => a - b);
+  const medianBrightness = sortedByBrightness[Math.floor(sortedByBrightness.length / 2)];
+  const filtered = regionAvgs.filter(a => {
+    const brightness = a.r + a.g + a.b;
+    return Math.abs(brightness - medianBrightness) < 180;
+  });
+  const regionsToUse = filtered.length >= 3 ? filtered : regionAvgs;
+
+  let sr = 0, sg = 0, sb = 0;
+  for (const a of regionsToUse) { sr += a.r; sg += a.g; sb += a.b; }
+  sr /= regionsToUse.length; sg /= regionsToUse.length; sb /= regionsToUse.length;
+
+  // Variance from filtered regions
   let variance = 0;
-  for (const [r, g, b] of samples) {
-    variance += (r - sr) ** 2 + (g - sg) ** 2 + (b - sb) ** 2;
+  for (const a of regionsToUse) {
+    variance += (a.r - sr) ** 2 + (a.g - sg) ** 2 + (a.b - sb) ** 2;
   }
-  variance /= count;
-  const tolerance = Math.max(Math.sqrt(variance) * 2.8, 30);
+  variance /= regionsToUse.length;
+  const tolerance = Math.max(Math.sqrt(variance) * 2.2, 36);
 
-  // Remove similar
+  // Remove pixels similar to background
   for (let i = 0; i < d.length; i += 4) {
-    const dist = Math.sqrt((d[i] - sr) ** 2 + (d[i + 1] - sg) ** 2 + (d[i + 2] - sb) ** 2);
-    if (dist < tolerance) d[i + 3] = 0;
+    const dr = d[i] - sr, dg = d[i + 1] - sg, db = d[i + 2] - sb;
+    if (dr * dr + dg * dg + db * db < tolerance * tolerance) d[i + 3] = 0;
   }
 
   featherMask();
@@ -467,28 +484,21 @@ function updatePreview() {
   pctx.fillRect(0, 0, outputW, outputH);
 
   if (maskData) {
+    // Use stored maskData directly — it already contains the cropped
+    // image RGB plus the modified alpha, no need to re-draw the image.
     const src = document.createElement('canvas');
-    src.width = maskData.width; src.height = maskData.height;
-    const sctx = src.getContext('2d');
-    sctx.drawImage(image,
-      (cropBox.x - imgX) / imgW * image.width,
-      (cropBox.y - imgY) / imgH * image.height,
-      cropBox.w / imgW * image.width,
-      cropBox.h / imgH * image.height,
-      0, 0, src.width, src.height);
-    const sd = sctx.getImageData(0, 0, src.width, src.height);
-    for (let i = 0; i < sd.data.length; i += 4) {
-      sd.data[i + 3] = maskData.data[i + 3];
-    }
-    sctx.putImageData(sd, 0, 0);
+    src.width = maskData.width;
+    src.height = maskData.height;
+    src.getContext('2d').putImageData(maskData, 0, 0);
     pctx.drawImage(src, 0, 0, outputW, outputH);
   } else {
-    pctx.drawImage(image,
-      (cropBox.x - imgX) / imgW * image.width,
-      (cropBox.y - imgY) / imgH * image.height,
-      cropBox.w / imgW * image.width,
-      cropBox.h / imgH * image.height,
-      0, 0, outputW, outputH);
+    const sx = (cropBox.x - imgX) / imgW * image.width;
+    const sy = (cropBox.y - imgY) / imgH * image.height;
+    const sw = cropBox.w / imgW * image.width;
+    const sh = cropBox.h / imgH * image.height;
+    if (sw > 0 && sh > 0 && sx >= 0 && sy >= 0) {
+      pctx.drawImage(image, sx, sy, sw, sh, 0, 0, outputW, outputH);
+    }
   }
 
   btnDownload.disabled = false;
