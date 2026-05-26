@@ -484,13 +484,34 @@ function updatePreview() {
   pctx.fillRect(0, 0, outputW, outputH);
 
   if (maskData) {
-    // Use stored maskData directly — it already contains the cropped
-    // image RGB plus the modified alpha, no need to re-draw the image.
-    const src = document.createElement('canvas');
-    src.width = maskData.width;
-    src.height = maskData.height;
-    src.getContext('2d').putImageData(maskData, 0, 0);
-    pctx.drawImage(src, 0, 0, outputW, outputH);
+    // Direct pixel compositing: blend cropped image (with mask alpha) over bg color.
+    // Avoids intermediate canvas / drawImage issues entirely.
+    const mw = maskData.width, mh = maskData.height;
+    const md = maskData.data;
+    const bgR = parseInt(bgColor.slice(1, 3), 16);
+    const bgG = parseInt(bgColor.slice(3, 5), 16);
+    const bgB = parseInt(bgColor.slice(5, 7), 16);
+
+    const outData = pctx.createImageData(outputW, outputH);
+    const od = outData.data;
+    const scaleX = mw / outputW;
+    const scaleY = mh / outputH;
+
+    for (let dy = 0; dy < outputH; dy++) {
+      const sy = Math.min(Math.floor(dy * scaleY), mh - 1);
+      const srcRow = sy * mw;
+      for (let dx = 0; dx < outputW; dx++) {
+        const sx = Math.min(Math.floor(dx * scaleX), mw - 1);
+        const si = (srcRow + sx) * 4;
+        const di = (dy * outputW + dx) * 4;
+        const a = md[si + 3] / 255;
+        od[di]     = md[si] * a + bgR * (1 - a);
+        od[di + 1] = md[si + 1] * a + bgG * (1 - a);
+        od[di + 2] = md[si + 2] * a + bgB * (1 - a);
+        od[di + 3] = 255;
+      }
+    }
+    pctx.putImageData(outData, 0, 0);
   } else {
     const sx = (cropBox.x - imgX) / imgW * image.width;
     const sy = (cropBox.y - imgY) / imgH * image.height;
